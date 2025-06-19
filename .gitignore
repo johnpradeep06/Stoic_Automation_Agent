@@ -1,0 +1,17 @@
+# .gitignore content
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Virtual environments
+venv/
+env/
+
+# Environment variables
+.env
+
+# OS / Editor files
+.DS_Store
+.idea/
+.vscode/
