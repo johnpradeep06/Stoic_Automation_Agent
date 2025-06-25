@@ -1,1 +1,17 @@
-apt-get update && apt-get install -y ffmpeg
+services:
+  - type: web
+    name: stoic-video-generator-web
+    env: python
+    plan: free
+    runtime: python
+    buildCommand: |
+      apt-get update && apt-get install -y ffmpeg
+      pip install -r requirements.txt
+    startCommand: python app.py
+    envVars:
+      - key: IMAGEROUTER_API_KEY
+        sync: false
+      - key: GOOGLE_CREDENTIALS
+        sync: false
+      - key: YOUTUBE_CREDENTIALS
+        sync: false
