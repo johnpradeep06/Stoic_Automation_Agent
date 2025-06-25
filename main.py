@@ -1,26 +1,40 @@
+import os
+import uuid
+import json
+import textwrap
 import requests
 import gspread
-from google.oauth2.service_account import Credentials
-import os
-from dotenv import load_dotenv
-import uuid
-from moviepy.editor import ImageClip, AudioFileClip
-from PIL import Image, ImageDraw, ImageFont
-import textwrap
 import pickle
+import tempfile
+from dotenv import load_dotenv
+from PIL import Image, ImageDraw, ImageFont
+from moviepy.editor import ImageClip, AudioFileClip
+from google.oauth2.service_account import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 
 # ------------------- CONFIG -------------------
 load_dotenv()
+
 api = os.getenv("IMAGEROUTER_API_KEY")
 if api and api.startswith("'") and api.endswith("'"):
     api = api[1:-1]
 
-# ------------------- SHEET SETUP -------------------
+# ------------------- GOOGLE SHEETS SETUP -------------------
 scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
-creds = Credentials.from_service_account_file("credentials.json", scopes=scope)
+credentials_json = os.getenv("GOOGLE_CREDENTIALS")
+
+if not credentials_json:
+    raise Exception("❌ GOOGLE_CREDENTIALS environment variable not set.")
+
+# Save creds to temp file
+with tempfile.NamedTemporaryFile(mode='w+', delete=False, suffix=".json") as temp:
+    temp.write(credentials_json)
+    temp.flush()
+    credentials_path = temp.name
+
+creds = Credentials.from_service_account_file(credentials_path, scopes=scope)
 client = gspread.authorize(creds)
 sheet = client.open("Quote_Access").sheet1
 
@@ -45,7 +59,7 @@ print(f"🎯 Quote selected from row {target_row_index}: {quote}")
 
 # ------------------- GENERATE IMAGE -------------------
 payload = {
-    "prompt": "A stoic scene featuring [any random subject: a wise philosopher / a lone warrior / a contemplative traveler / a resilient laborer / a serene monk / a determined athlete] in [setting: ancient ruins / a misty mountain pass / a bustling medieval market / a quiet library / a stormy battlefield / a sunlit courtyard]. The atmosphere is [mood: tranquil yet powerful / melancholic but dignified / harsh yet enduring / serene with hidden strength]. The style is [art style: classical realism / cinematic chiaroscuro / neo-stoic illustration / matte painting with muted tones]. Focus on [details: weathered textures / subtle expressions of resolve / symbolic objects (like a broken sword, an old book, or a flickering lamp) / dramatic lighting]. Evoke timeless resilience and quiet intensity.",
+    "prompt": f"Create a highly detailed stoic image style of 18th-century. The scene should match the emotional tone and theme of the following quote: '{quote}'. Ensure the characters, setting, and composition reflect the story or sentiment in the quote, using historically inspired outfits and soft natural lighting. Maintain a heartwarming and vintage atmosphere throughout.",
     "model": "stabilityai/sdxl-turbo:free",
 }
 headers = {
@@ -62,6 +76,7 @@ except (KeyError, IndexError):
     print("❌ Failed to retrieve image URL.")
     exit()
 
+os.makedirs("images", exist_ok=True)
 filename = f"images/{uuid.uuid4()}.jpg"
 img_data = requests.get(image_url).content
 with open(filename, 'wb') as handler:
@@ -92,26 +107,42 @@ print("🖼️ Quote image saved.")
 # ------------------- CREATE VIDEO -------------------
 audio = AudioFileClip("resources/stoic.mp3").subclip(0, 7)
 clip = ImageClip(quote_img_filename).set_duration(7).resize(height=1080).set_audio(audio)
+clip = clip.fadein(0.5).fadeout(0.2)
+
 video_filename = "quote_video_with_audio.mp4"
 clip.write_videofile(video_filename, fps=24)
 print("🎬 Video created successfully.")
 
-# ------------------- UPLOAD TO YOUTUBE -------------------
+# ------------------- (OPTIONAL) UPLOAD TO YOUTUBE -------------------
+'''
+YOUTUBE_CREDENTIALS is another .env variable that contains your youtube_cred.json as minified and escaped JSON.
+'''
+
 def authenticate_youtube():
     yt_scope = ["https://www.googleapis.com/auth/youtube.upload"]
     creds = None
-    if os.path.exists("token_youtube.pickle"):
-        with open("token_youtube.pickle", "rb") as token:
-            creds = pickle.load(token)
-    if not creds:
-        flow = InstalledAppFlow.from_client_secrets_file("youtube_cred.json", yt_scope)
-        creds = flow.run_local_server(port=8081)
-        with open("token_youtube.pickle", "wb") as token:
-            pickle.dump(creds, token)
+
+    # Save youtube creds to a temp file
+    youtube_cred_json = os.getenv("YOUTUBE_CREDENTIALS")
+    if not youtube_cred_json:
+        print("⚠️ YOUTUBE_CREDENTIALS not set. Skipping YouTube upload.")
+        return None
+
+    with tempfile.NamedTemporaryFile(mode='w+', delete=False, suffix=".json") as temp:
+        temp.write(youtube_cred_json)
+        temp.flush()
+        yt_path = temp.name
+
+    flow = InstalledAppFlow.from_client_secrets_file(yt_path, yt_scope)
+    creds = flow.run_console()
+
     return build("youtube", "v3", credentials=creds)
+
 
 def upload_video_to_youtube(file_path, title, description, tags, category_id=22, privacy_status="public"):
     youtube = authenticate_youtube()
+    if not youtube:
+        return
     body = {
         "snippet": {
             "title": title,
@@ -123,7 +154,6 @@ def upload_video_to_youtube(file_path, title, description, tags, category_id=22,
             "privacyStatus": privacy_status
         }
     }
-
     media = MediaFileUpload(file_path, chunksize=-1, resumable=True, mimetype="video/*")
     request = youtube.videos().insert(part="snippet,status", body=body, media_body=media)
     response = None
@@ -142,6 +172,7 @@ upload_video_to_youtube(
     category_id=22,
     privacy_status="public"
 )
+
 
 # ------------------- UPDATE SHEET -------------------
 sheet.update_cell(target_row_index, status_col_index, 'Complete')
