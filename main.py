@@ -28,9 +28,12 @@ credentials_json = os.getenv("GOOGLE_CREDENTIALS")
 if not credentials_json:
     raise Exception("❌ GOOGLE_CREDENTIALS environment variable not set.")
 
+parsed_credentials = json.loads(credentials_json)
+
+
 # Save creds to temp file
 with tempfile.NamedTemporaryFile(mode='w+', delete=False, suffix=".json") as temp:
-    temp.write(credentials_json)
+    json.dump(parsed_credentials, temp)
     temp.flush()
     credentials_path = temp.name
 
